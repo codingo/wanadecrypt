@@ -44,61 +44,67 @@ int wmain(int argc, wchar_t * argv[])
 	DWORD cbRsaKey, cbEncData, cbRealDataLen, cryptoMode = CRYPT_MODE_CBC;
 	PWCHAR p;
 
-	if(argc > 2)
+	if (argc <= 2)
 	{
-		wprintf(L"Using \'%s\' to decrypt \'%s\' file...\n\n", argv[1], argv[2]);
-		if(SIMPLE_kull_m_file_readData(argv[1], &pbRsaKey, &cbRsaKey))
-		{
-			if(SIMPLE_kull_m_file_readData(argv[2], (PBYTE *) &pbEncData, &cbEncData))
-			{
-				if(p = wcsrchr(argv[2], L'.'))
-				{
-					*p = L'\0'; // 'delete' the WNCRY extension
-					if(pbEncData->magic == WANA_MAGIC)
-					{
-						wprintf(L"Mode(?)   : %u\nFilesize  : %llu\n", pbEncData->unkOperation, pbEncData->qwDataSize);
-						if(CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) // we'll do RSA / AES stuff
-						{
-							if(CryptImportKey(hProv, pbRsaKey, cbRsaKey, 0, 0, &hRsaKey)) // let's import the user PrivateKey - I hope you have it :(
-							{
-								if(CryptDecrypt(hRsaKey, 0, TRUE, 0, pbEncData->key, &pbEncData->enc_keysize)) // decrypt the raw AES key from your RSA key
-								{
-									if(SIMPLE_kull_m_crypto_hkey(hProv, CALG_AES_128, pbEncData->key, pbEncData->enc_keysize, 0, &hAesKey)) // let's make a AES 128 Windows key from raw bytes
-									{
-										if(CryptSetKeyParam(hAesKey, KP_MODE, (PBYTE) &cryptoMode, 0)) // we'll do CBC
-										{
-											cbRealDataLen = cbEncData - FIELD_OFFSET(WANA_FORMAT, data);
-											if(CryptDecrypt(hAesKey, 0, FALSE, 0, pbEncData->data, &cbRealDataLen)) // decrypt final data (padding issue, so 'FALSE' arg)
-											{
-												if(SIMPLE_kull_m_file_writeData(argv[2], pbEncData->data, (ULONG) pbEncData->qwDataSize))
-													wprintf(L"Final file: %s\n", argv[2]);
-												else wprintf(L"ERROR: writing final file \'%s\': %u\n", argv[2], GetLastError());
-											}
-											else wprintf(L"ERROR: CryptDecrypt: %u\n", GetLastError());
-										}
-										CryptDestroyKey(hAesKey);
-									}
-								}
-								else wprintf(L"ERROR: CryptDecrypt: %u\n", GetLastError());
-								CryptDestroyKey(hRsaKey);
-							}
-							else wprintf(L"ERROR: CryptImportKey: %u\n", GetLastError());
-							CryptReleaseContext(hProv, 0);
-						}
-						else wprintf(L"ERROR: CryptAcquireContext: %u\n", GetLastError());
-					}
-					else wprintf(L"ERROR: WANACRY! magic number not found\n");
-				}
-				else wprintf(L"ERROR: no \'.\' at the end of the user file ?\n");
-				LocalFree(pbRsaKey);
-			}
-			else wprintf(L"ERROR: reading userfile \'%s\': %u\n", argv[2], GetLastError());
-			LocalFree(pbEncData);
-		}
-		else wprintf(L"ERROR: reading privatekey file \'%s\': %u\n", argv[1], GetLastError());
+		wprintf(L"ERROR: program needs two arguments: <userprivatekey> <userfile.WNCRY>\n");
+		return 0;
 	}
-	else wprintf(L"ERROR: program needs two arguments: <userprivatekey> <userfile.WNCRY>\n");
-	return 0;
+
+	wprintf(L"Using \'%s\' to decrypt \'%s\' file...\n\n", argv[1], argv[2]);
+
+	if (!SIMPLE_kull_m_file_readData(argv[1], &pbRsaKey, &cbRsaKey))
+	{
+		wprintf(L"ERROR: reading privatekey file \'%s\': %u\n", argv[1], GetLastError());
+		return 0;
+	}
+
+	if (!SIMPLE_kull_m_file_readData(argv[2], (PBYTE *)&pbEncData, &cbEncData))
+	{
+		wprintf(L"ERROR: reading userfile \'%s\': %u\n", argv[2], GetLastError());
+		return 0;
+	}
+
+	if (!(p = wcsrchr(argv[2], L'.')))
+	{
+		wprintf(L"ERROR: no \'.\' at the end of the user file ?\n");
+		return 0;
+	}
+
+	*p = L'\0'; // 'delete' the WNCRY extension
+	if (pbEncData->magic == WANA_MAGIC)
+	{
+		wprintf(L"Mode(?)   : %u\nFilesize  : %llu\n", pbEncData->unkOperation, pbEncData->qwDataSize);
+		if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) // we'll do RSA / AES stuff
+		{
+			wprintf(L"ERROR: CryptAcquireContext: %u\n", GetLastError());
+			return 0;
+		}
+		if (!CryptImportKey(hProv, pbRsaKey, cbRsaKey, 0, 0, &hRsaKey)) // let's import the user PrivateKey - I hope you have it :(
+			wprintf(L"ERROR: CryptImportKey: %u\n", GetLastError());
+		if (!CryptDecrypt(hRsaKey, 0, TRUE, 0, pbEncData->key, &pbEncData->enc_keysize)) // decrypt the raw AES key from your RSA key
+			wprintf(L"ERROR: CryptDecrypt: %u\n", GetLastError());
+		if (SIMPLE_kull_m_crypto_hkey(hProv, CALG_AES_128, pbEncData->key, pbEncData->enc_keysize, 0, &hAesKey)) // let's make a AES 128 Windows key from raw bytes
+		{
+			if (CryptSetKeyParam(hAesKey, KP_MODE, (PBYTE)&cryptoMode, 0)) // we'll do CBC
+			{
+				cbRealDataLen = cbEncData - FIELD_OFFSET(WANA_FORMAT, data);
+				if (CryptDecrypt(hAesKey, 0, FALSE, 0, pbEncData->data, &cbRealDataLen)) // decrypt final data (padding issue, so 'FALSE' arg)
+				{
+					if (SIMPLE_kull_m_file_writeData(argv[2], pbEncData->data, (ULONG)pbEncData->qwDataSize))
+						wprintf(L"Final file: %s\n", argv[2]);
+					else wprintf(L"ERROR: writing final file \'%s\': %u\n", argv[2], GetLastError());
+				}
+				else wprintf(L"ERROR: CryptDecrypt: %u\n", GetLastError());
+			}
+			CryptDestroyKey(hAesKey);
+		}
+		CryptDestroyKey(hRsaKey);
+		CryptReleaseContext(hProv, 0);
+	}
+	else wprintf(L"ERROR: WANACRY! magic number not found\n");
+
+	LocalFree(pbRsaKey);
+	LocalFree(pbEncData);
 }
 
 BOOL SIMPLE_kull_m_crypto_hkey(HCRYPTPROV hProv, ALG_ID calgid, LPCVOID key, DWORD keyLen, DWORD flags, HCRYPTKEY *hKey)
